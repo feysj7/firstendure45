@@ -681,7 +681,36 @@ function addEvent(){
   document.getElementById('ev-place').value='';
 }
 
-// AI CHAT
+// AI CHAT — история диалога хранится здесь
+const chatHistory = [];
+
+const SYSTEM_PROMPT = `Ты — живой наставник и эксперт платформы FIRST Endure. Помогаешь FTC-командам Казахстана выживать и расти сезон за сезоном.
+
+Контекст платформы:
+- 180 FTC-команд в Казахстане в 2026 году
+- Только 14% команд доживают до следующего сезона — это главная проблема
+- Средний бюджет сезона 1: ~2 000 000 тенге, сезона 2: ~1 200 000 тенге (экономия за счёт сохранённого оборудования)
+- Основные спонсоры в KZ: Kaspi Bank, Samruk-Kazyna, Astana Hub, Daryn, школы
+- Соревнования: региональные этапы → Central Asian Championship (Астана, EXPO) → World Championship (Хьюстон)
+- Новая награда FIRST с 2026: Sustain Award — за устойчивость команды 3+ сезонов
+
+Данные текущей команды (Сезон 2):
+- Бюджет сезона: 1 200 000 тенге, остаток: 340 000 тенге
+- Спонсоры: Kaspi Bank (600 000 T, Gold, контракт год 2 из 3), Школа N47 Шымкент (200 000 T), Astana Hub (переговоры, встреча 20 апреля)
+- Состав: Альбина (капитан, дублер Зарина), Феруза (финансы, дублер Темир), Алтынай (технологии, дублер Амина), Бинура (исследования, дублер Аида)
+- Задачи: выполнено 3 из 7. Ещё не сделано: собрать робота v1, назначить дублеров, отчёт спонсору, база знаний
+- Инвентарь: 24 единицы, стоимостью 850 000 T. Сенсоры (IMU, дальномер) — требуют проверки. Аккумуляторы — требуют замены
+- Ближайшее событие: Girls Go FIRST Regional Finals — сегодня-завтра. World Championship в Хьюстоне — 14 мая 2026
+
+Как ты общаешься:
+- Говоришь как живой ментор, не как чат-бот. Без казённых фраз типа "Отличный вопрос!"
+- Конкретно, по делу, с реальными цифрами из контекста выше
+- Если спрашивают про письмо — пишешь черновик письма, а не инструкцию как его писать
+- Если спрашивают про бюджет — считаешь с реальными цифрами команды
+- Отвечаешь на русском. Можешь использовать казахские слова где уместно
+- Длина ответа — по ситуации: короткий вопрос = короткий ответ, сложная задача = развёрнуто
+- Форматируй ответы для читаемости в браузере (переносы строк, списки через •)`;
+
 async function sendMsg(){
   const input=document.getElementById('chat-input');
   const text=input.value.trim();
@@ -690,34 +719,38 @@ async function sendMsg(){
   appendMsg(text,'user');
   document.getElementById('send-btn').disabled=true;
   const typingId=appendTyping();
+
+  // Добавляем сообщение пользователя в историю
+  chatHistory.push({role:'user', content:text});
+
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
+    const res=await fetch('/api/ask',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         model:'claude-sonnet-4-20250514',
         max_tokens:1000,
-        system:`Ты ИИ ассистент платформы FIRST Endure для FTC команд Казахстана. 
-Отвечаешь на русском языке. Коротко и конкретно.
-Специализируешься на: управлении FTC командами, финансовом планировании, поиске спонсоров, 
-системе преемственности, инвентаризации оборудования, подготовке к соревнованиям FIRST в Казахстане.
-Знаешь контекст: в Казахстане 180 FTC команд, только 14% выживают до след сезона, 
-средний бюджет 2M тенге, основные партнеры Samruk-Kazyna, Astana Hub, Daryn.
-Отвечай дружелюбно, используй конкретные цифры и примеры из казахстанского контекста.`,
-        messages:[{role:'user',content:text}]
+        system: SYSTEM_PROMPT,
+        messages: chatHistory  // передаём всю историю!
       })
     });
     removeTyping(typingId);
     if(res.ok){
       const data=await res.json();
       const reply=data.content[0].text;
+      // Добавляем ответ ИИ в историю
+      chatHistory.push({role:'assistant', content:reply});
       appendMsg(reply,'ai');
     } else {
-      appendMsg(getLocalReply(text),'ai');
+      // Убираем последнее сообщение из истории если ошибка
+      chatHistory.pop();
+      const errData=await res.json().catch(()=>({}));
+      appendMsg('Ошибка сервера: '+(errData.error||res.status)+'. Проверь ANTHROPIC_API_KEY в настройках Vercel.','ai');
     }
   } catch(e){
     removeTyping(typingId);
-    appendMsg(getLocalReply(text),'ai');
+    chatHistory.pop();
+    appendMsg('Не удалось связаться с сервером. Убедись что /api/ask работает на Vercel.','ai');
   }
   document.getElementById('send-btn').disabled=false;
 }
@@ -732,9 +765,14 @@ function appendMsg(text,role){
   const div=document.createElement('div');
   div.className=`msg ${role}`;
   const time=new Date().toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+  // Форматируем текст: переносы строк и списки
+  const formatted=text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\n/g,'<br>');
   div.innerHTML=`
     <div class="msg-avatar">${role==='ai'?'AI':'Вы'}</div>
-    <div><div class="msg-bubble">${text.replace(/\n/g,'<br>')}</div><div class="msg-time">${time}</div></div>`;
+    <div><div class="msg-bubble">${formatted}</div><div class="msg-time">${time}</div></div>`;
   wrap.appendChild(div);
   wrap.scrollTop=wrap.scrollHeight;
 }
@@ -754,21 +792,6 @@ function appendTyping(){
 function removeTyping(id){
   const el=document.getElementById(id);
   if(el)el.remove();
-}
-
-function getLocalReply(text){
-  const t=text.toLowerCase();
-  if(t.includes('спонсор')||t.includes('письмо'))
-    return 'Чтобы написать письмо спонсору:\n\n1. Начни с результатов команды (соревнования, награды)\n2. Объясни зачем нужны деньги конкретно\n3. Предложи конкретный пакет (Bronze/Silver/Gold)\n4. Укажи что получает спонсор: логотип, стажировки, CSR отчет\n5. Предложи встречу или звонок\n\nВажно: пиши на языке бизнеса — ROI, видимость бренда, STEM-таланты.';
-  if(t.includes('бюджет')||t.includes('расход')||t.includes('финанс'))
-    return 'Чтобы снизить расходы на 2-й сезон:\n\n1. Сохрани всё оборудование после сезона 1 — это экономит 550 000 T\n2. Не покупай поле заново — оно служит 3+ сезона\n3. Alumni-ментор вместо платного — экономия 300 000 T\n4. Shared оборудование с другой командой — экономия 30%\n\nРезультат: сезон 2 стоит 1.2M вместо 2M тенге.';
-  if(t.includes('преемственность')||t.includes('дублер')||t.includes('уход'))
-    return 'Система преемственности:\n\n1. За 6 месяцев до выпуска — каждый берет дублера\n2. Роли: капитан, финменеджер, ресурс-менеджер, knowledge officer\n3. База знаний: инструкции, бюджеты прошлых сезонов, шаблоны\n4. Выпускник становится бесплатным Alumni-ментором\n\nПравило: команда не должна зависеть от одного человека.';
-  if(t.includes('sustain')||t.includes('award')||t.includes('награда'))
-    return 'Sustain Award — новая награда FIRST с 2026 года.\n\nКак получить:\n1. Докажи что команда существует 3+ сезона\n2. Покажи устойчивых спонсоров с контрактами\n3. Продемонстрируй систему преемственности\n4. Подготовь документацию: бюджеты, инвентарь, отчеты\n\nЭто именно то что решает платформа FIRST Endure.';
-  if(t.includes('инвентар')||t.includes('оборудован'))
-    return 'Система инвентаризации:\n\n1. Каждая единица = карточка (название, ответственный, статус)\n2. Три категории: Актив 3+ лет / Расходник / Заменить\n3. В конце сезона: всё сдается в школу по протоколу\n4. Фото состояния каждого предмета\n\nПравило: оборудование принадлежит команде, не участнику.';
-  return 'Отличный вопрос! По этой теме рекомендую:\n\n1. Изучи раздел "Дашборд" — там финансовая модель на 3 сезона\n2. Раздел "Команды KZ" — опыт других команд Казахстана\n3. Напиши более конкретный вопрос — помогу детально\n\nЧем конкретнее вопрос, тем точнее ответ!';
 }
 </script>
 
